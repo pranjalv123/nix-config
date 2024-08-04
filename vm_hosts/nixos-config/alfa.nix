@@ -29,7 +29,7 @@
       mem_gb = 2;
       modules = [./vms/nomad/nomad-server-1.nix];
       uuid = "0c79db1a-0501-406b-a8e4-4a5e978f7d65";
-      diskSize = 10 * 1024;
+      diskSize = 20 * 1024;
     }
     {
       name = "nomad-client-1";
