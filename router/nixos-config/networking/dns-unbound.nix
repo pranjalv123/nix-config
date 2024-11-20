@@ -49,10 +49,9 @@
       server = {
         interface = "lanBond0";
         access-control = "10.0.0.0/8 allow";
-        logfile = "/etc/unbound/unbound.log";
-        verbosity = "3";
+        use-syslog = "yes";
+        verbosity = "1";
         do-not-query-localhost = "no";
-
       };
       remote-control = {
         control-enable = true;

@@ -36,7 +36,7 @@
       mem_gb = 24;
       modules = [./vms/nomad/nomad-client-1.nix];
       uuid = "521221b9-1448-4e0b-b3e8-4f88c204afd5";
-      diskSize = 10 * 1024;
+      diskSize = 20 * 1024;
       devices = {
         hostdev = [
           {
@@ -74,6 +74,41 @@
   networking.hostId = "b7cbc15f";
 
   boot.zfs.extraPools = ["orbweaver"];
+  services.samba = {
+    enable = true;
+    securityType = "user";
+    openFirewall = true;
+    extraConfig = ''
+      workgroup = WORKGROUP
+      server string = smbnix
+      netbios name = smbnix
+      security = user
+      #use sendfile = yes
+      #max protocol = smb2
+      # note: localhost is the ipv6 localhost ::1
+      hosts allow = 10.0.0.0/8 127.0.0.1 localhost
+      hosts deny = 0.0.0.0/0
+      guest account = nobody
+      map to guest = bad user
+    '';
+    shares = {
+      private = {
+        path = "/orbweaver";
+        browseable = "yes";
+        "read only" = "no";
+        "guest ok" = "no";
+        "create mask" = "0644";
+        "directory mask" = "0755";
+        "force user" = "pranjal";
+        "force group" = "users";
+      };
+    };
+  };
+
+  services.samba-wsdd = {
+    enable = true;
+    openFirewall = true;
+  };
 
   virtualisation.libvirt.connections."qemu:///system".pools = [
     {

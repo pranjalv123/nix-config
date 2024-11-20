@@ -13,6 +13,7 @@ with lib; {
     ./pxe.nix
     ./dns-unbound.nix
     ./dns-bind.nix
+    #./tailscale.nix
     # ./dns.nix
   ];
   options = {

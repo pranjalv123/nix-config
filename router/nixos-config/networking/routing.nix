@@ -24,6 +24,8 @@
 
           iifname "lanBond0" accept comment "Allow all traffic on lanBond0 (for now at least)";
 
+          # iifname "tailscale0" accept comment "Allow all traffic on tailscale0 (for now at least)";
+
           iifname "wan0" drop
 
           iifname "lanBond0" ip protocol icmp accept comment "Allow all icmp traffic on lan0";
