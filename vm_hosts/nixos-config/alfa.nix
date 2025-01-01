@@ -8,7 +8,6 @@
   imports = [
     ./alfa-hardware-configuration.nix
   ];
-
   vms = [
     {
       name = "vault";
@@ -39,22 +38,24 @@
       diskSize = 20 * 1024;
       devices = {
         hostdev = [
-          {
-            type = "usb";
-            mode = "subsystem";
-            source = {
-              vendor = {id = "0x1a86";};
-              product = {id = "0x55d4";};
-            };
-          }
-          {
-            type = "usb";
-            mode = "subsystem";
-            source = {
-              vendor = {id = "0x10c4";};
-              product = {id = "0xea60";};
-            };
-          }
+#          {
+#            type = "usb";
+#            mode = "subsystem";
+#            source = {
+#              vendor = {id = 6790;}; # 0x1a86
+#              product = {id = 21972;}; # 0x55d4
+#              address = {bus = 1; device = 6;};
+#            };
+#          }
+#          {
+#            type = "usb";
+#            mode = "subsystem";
+#            source = {
+#              vendor = {id = 6790;}; # 0x1a86
+#              product = {id = 21972;}; # 0x55d4
+#              address = {bus = 3; device = 2;};
+#            };
+#          }
         ];
       };
     }
@@ -78,19 +79,19 @@
     enable = true;
     securityType = "user";
     openFirewall = true;
-    extraConfig = ''
-      workgroup = WORKGROUP
-      server string = smbnix
-      netbios name = smbnix
-      security = user
-      #use sendfile = yes
-      #max protocol = smb2
-      # note: localhost is the ipv6 localhost ::1
-      hosts allow = 10.0.0.0/8 127.0.0.1 localhost
-      hosts deny = 0.0.0.0/0
-      guest account = nobody
-      map to guest = bad user
-    '';
+    settings = {
+      global = {
+        workgroup = "WORKGROUP";
+        "server string" = "smbnix";
+        "netbios name" = "smbnix";
+        "security" = "user";
+        "hosts allow" = "10.0.0.0/8 127.0.0.1 localhost";
+        "hosts deny" = "0.0.0.0/0";
+        "guest account" = "nobody";
+        "map to guest" = "bad user";
+      };
+    };
+
     shares = {
       private = {
         path = "/orbweaver";

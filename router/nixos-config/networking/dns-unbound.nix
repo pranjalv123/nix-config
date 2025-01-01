@@ -52,6 +52,7 @@
         use-syslog = "yes";
         verbosity = "1";
         do-not-query-localhost = "no";
+        use-caps-for-id = "no";
       };
       remote-control = {
         control-enable = true;

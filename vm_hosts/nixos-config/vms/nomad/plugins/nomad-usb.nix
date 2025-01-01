@@ -2,10 +2,10 @@
   stdenv,
   fetchzip,
   pkgs,
-  buildGoModule
+  buildGo122Module
 }:
 
-buildGoModule {
+buildGo122Module {
   pname = "nomad-usb";
   version = "v0.4.0";
 

@@ -44,10 +44,7 @@
     systemd.services = builtins.listToAttrs (map (vm: let
         iso_img = nixos-generators.nixosGenerate {
           system = "x86_64-linux";
-          specialArgs = {
-            diskSize = vm.diskSize;
-          };
-          modules = vm.modules;
+          modules = [{virtualisation.diskSize = vm.diskSize;}] ++ vm.modules;
           format = "qcow";
         };
       in {
