@@ -12,9 +12,16 @@
     after = ["mount_fs.service"];
     wants = ["mount_fs.service"];
     before = ["sshd.service"];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
     script = ''
-      ls /persist
-      ls /persist/ssh_keys
+      # `ls /persist/ssh_keys` on a not-yet-mounted /persist exits 2 and killed
+      # this unit outright (that is how it failed on the last boot). With
+      # mount_fs now a real oneshot the ordering holds, but create the dir
+      # rather than trusting it to exist.
+      mkdir -p /persist/ssh_keys
       if [ ! -f /persist/ssh_keys/ssh_host_rsa_key ]; then
         echo "Generating RSA key"
         /run/current-system/sw/bin/ssh-keygen -t rsa -b 4096 -f /persist/ssh_keys/ssh_host_rsa_key -N ""

@@ -80,13 +80,20 @@
       };
     };
 
-    systemd.services.vault = {
+    # This used to target `vault`, which only exists on the vault VM (and which
+    # vault.nix already configures itself) — so on every other VM it just
+    # generated a stray, never-started vault.service while the unit that
+    # actually matters here went unordered. vault-agent reads
+    # /persist/vault-agent/role_id at startup, so it has to wait for the mount.
+    systemd.services.vault-agent-vault-agent = {
       wants = ["network-online.target" "mount_fs.service"];
       after = ["network-online.target" "mount_fs.service"];
       serviceConfig = {
-        restartSec = 10;
+        RestartSec = 10;
+        Restart = lib.mkForce "always";
       };
       startLimitBurst = lib.mkForce 10;
+      startLimitIntervalSec = lib.mkForce 300;
     };
   };
 }

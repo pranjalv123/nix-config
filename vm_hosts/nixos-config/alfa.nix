@@ -36,28 +36,14 @@
       modules = [./vms/nomad/nomad-client-1.nix];
       uuid = "521221b9-1448-4e0b-b3e8-4f88c204afd5";
       diskSize = 20 * 1024;
-      devices = {
-        hostdev = [
-#          {
-#            type = "usb";
-#            mode = "subsystem";
-#            source = {
-#              vendor = {id = 6790;}; # 0x1a86
-#              product = {id = 21972;}; # 0x55d4
-#              address = {bus = 1; device = 6;};
-#            };
-#          }
-#          {
-#            type = "usb";
-#            mode = "subsystem";
-#            source = {
-#              vendor = {id = 6790;}; # 0x1a86
-#              product = {id = 21972;}; # 0x55d4
-#              address = {bus = 3; device = 2;};
-#            };
-#          }
-        ];
-      };
+      # Attached at VM start by serial, which survives reboots — the bus/device
+      # numbers these used to be pinned to do not. Replaces hand-running
+      # `virsh attach-device nomad-client-1 --file ~/sonoff-e-usb.xml` after
+      # every restart.
+      usbSerials = [
+        "20240123213326" # ITEAD Sonoff Zigbee 3.0 Dongle Plus V2 -> zigbee2mqtt
+        "533D004242"     # Zooz 800 Z-Wave Stick                  -> zwavejs
+      ];
     }
   ];
 
@@ -85,7 +71,7 @@
         "server string" = "smbnix";
         "netbios name" = "smbnix";
         "security" = "user";
-        "hosts allow" = "10.0.0.0/8 127.0.0.1 localhost";
+        "hosts allow" = "10.0.0.0/8 192.168.1.0/16 127.0.0.1 localhost";
         "hosts deny" = "0.0.0.0/0";
         "guest account" = "nobody";
         "map to guest" = "bad user";

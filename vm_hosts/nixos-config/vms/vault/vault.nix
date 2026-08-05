@@ -45,8 +45,10 @@
     after = ["network-online.target" "mount_fs.service"];
     preStart = "/run/current-system/sw/bin/sleep 10";
     serviceConfig = {
-      restartSec = 10;
+      RestartSec = 10;
+      Restart = lib.mkForce "always";
     };
-    startLimitBurst = lib.mkForce  10;
+    startLimitBurst = lib.mkForce 10;
+    startLimitIntervalSec = lib.mkForce 300;
   };
 }

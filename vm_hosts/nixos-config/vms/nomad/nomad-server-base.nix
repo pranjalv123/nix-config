@@ -71,7 +71,17 @@
       wants = ["network-online.target" "mount_fs.service"];
       after = ["network-online.target" "mount_fs.service"];
       serviceConfig = {
-        restartSec = 10;
+        RestartSec = lib.mkForce 10;
+        # vault-agent reloads certs with `pkill -SIGHUP nomad`. Nomad exits on
+        # that signal, and systemd counts a signal death as a clean stop, so
+        # Restart=on-failure left the agent down for good. always > on-failure.
+        Restart = lib.mkForce "always";
+      };
+      # nomad.nix writes unitConfig directly, so override there rather than via
+      # the startLimitBurst option (which targets the same key and conflicts).
+      unitConfig = {
+        StartLimitBurst = lib.mkForce 10;
+        StartLimitIntervalSec = lib.mkForce 300;
       };
     };
   };

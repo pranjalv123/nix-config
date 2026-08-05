@@ -25,6 +25,18 @@
             default = 2;
           };
           devices = lib.mkOption { type = lib.types.attrs; default = {}; };
+
+          # USB dongles to hand to this VM, identified by their *serial number*
+          # (see /sys/bus/usb/devices/*/serial or /dev/serial/by-id/).
+          #
+          # Matching on vendor:product is not enough here — the Sonoff Zigbee V2
+          # and the Zooz Z-Wave stick are both 1a86:55d4 — and the bus/device
+          # numbers the old hand-written XMLs used are reassigned on every boot.
+          # Serials are stable, so we resolve them to an address at start time.
+          usbSerials = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+          };
         };
       });
       default = [];
@@ -61,7 +73,45 @@
             chmod ug+rw /var/lib/libvirt/images/${vm.name}.qcow2
             /run/current-system/sw/bin/virsh -c qemu:///system destroy ${vm.name} || true
             /run/current-system/sw/bin/virsh -c qemu:///system start ${vm.name}
-          '';
+          ''
+          + lib.concatMapStrings (serial: ''
+
+            # --- USB passthrough: serial ${serial} ---
+            # The domain was just destroyed and recreated, so there is nothing
+            # attached yet and this cannot double-attach.
+            devpath=""
+            for d in /sys/bus/usb/devices/*/; do
+              if [ -r "$d/serial" ] && [ "$(cat "$d/serial")" = "${serial}" ]; then
+                devpath="$d"
+                break
+              fi
+            done
+
+            if [ -z "$devpath" ]; then
+              echo "WARNING: no USB device with serial ${serial} present; skipping"
+            else
+              vid=$(cat "$devpath/idVendor")
+              pid=$(cat "$devpath/idProduct")
+              busnum=$(cat "$devpath/busnum")
+              devnum=$(cat "$devpath/devnum")
+              echo "Attaching USB $vid:$pid (serial ${serial}) at bus $busnum device $devnum to ${vm.name}"
+
+              printf '<hostdev mode="subsystem" type="usb" managed="yes"><source><vendor id="0x%s"/><product id="0x%s"/><address type="usb" bus="%d" device="%d"/></source></hostdev>' \
+                "$vid" "$pid" "$busnum" "$devnum" \
+                > /run/usb-${vm.name}-${serial}.xml
+
+              # qemu may not have finished coming up the instant virsh start
+              # returns, so give the attach a few tries before giving up.
+              for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                if /run/current-system/sw/bin/virsh -c qemu:///system \
+                     attach-device ${vm.name} --file /run/usb-${vm.name}-${serial}.xml --live; then
+                  break
+                fi
+                echo "attach attempt $attempt failed; retrying in 3s"
+                sleep 3
+              done
+            fi
+          '') vm.usbSerials;
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;

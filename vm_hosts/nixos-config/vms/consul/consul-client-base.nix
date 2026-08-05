@@ -28,7 +28,8 @@
         auto_encrypt = {
           tls = true;
         };
-        bind_addr = "{{ GetPrivateInterfaces | include \"network\" \"10.0.0.0/8\" | attr \"address\" }}";
+        # bind_addr = "{{ GetPrivateInterfaces | include \"network\" \"10.0.0.0/8\" | attr \"address\" }}";
+        bind_addr = "{{ GetPrivateInterfaces | include \"network\" \"192.168.1.0/24\" | attr \"address\" }}";
 
       };
 
@@ -37,9 +38,14 @@
       wants = ["network-online.target" "mount_fs.service"];
       after = ["network-online.target" "mount_fs.service"];
       serviceConfig = {
-        restartSec = 10;
+        # Was `restartSec` — systemd logged "Unknown key 'restartSec', ignoring"
+        # and fell back to the 100ms default, so all 10 restarts burned in ~4s,
+        # before DHCP had handed out an address.
+        RestartSec = 10;
+        Restart = lib.mkForce "always";
         Type = "notify";
       };
-      startLimitBurst = lib.mkForce  10;
+      startLimitBurst = lib.mkForce 10;
+      startLimitIntervalSec = 300;
     };
 }

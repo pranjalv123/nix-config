@@ -129,7 +129,12 @@
       wants = ["network-online.target" "mount_fs.service"];
       after = ["network-online.target" "mount_fs.service"];
       serviceConfig = {
-        restartSec = 10;
+        RestartSec = lib.mkForce 10;
+        Restart = lib.mkForce "always";
+      };
+      unitConfig = {
+        StartLimitBurst = lib.mkForce 10;
+        StartLimitIntervalSec = lib.mkForce 300;
       };
       path = [ pkgs.consul pkgs.vault ];
     };
