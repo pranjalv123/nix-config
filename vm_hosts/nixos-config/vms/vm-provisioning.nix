@@ -224,11 +224,20 @@
                   };
                 }
               ];
+              # Listen on a unix socket rather than TCP. With listen type
+              # "address" libvirt fills in 127.0.0.1, and qemu resolves that
+              # through getaddrinfo() with AI_ADDRCONFIG -- which returns no
+              # IPv4 results while the host has no non-loopback IPv4 address.
+              # On a cold boot where DHCP was slow that made SPICE fail to bind
+              # a *loopback* literal, and every VM refused to start. A unix
+              # socket never touches getaddrinfo, so VM startup no longer
+              # depends on the external network at all. virt-manager and
+              # `virsh domdisplay` still work locally / over SSH.
               graphics = {
                 type = "spice";
-                autoport = true;
+                autoport = false;
                 listen = {
-                  type = "address";
+                  type = "socket";
                 };
               };
               video = {
