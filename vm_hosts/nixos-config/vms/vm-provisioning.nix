@@ -63,7 +63,13 @@
         name = "vm-prep-${vm.name}";
         value = {
           description = "prep for ${vm.name} vm";
-          after = ["network.target"];
+          # network.target only means "networkd has started", not that we have
+          # an address; qemu needs a real IPv4 address to bring up SPICE. Wait
+          # for network-online.target (now gated on a routable v4 addr, see
+          # alfa.nix) and for libvirtd to be accepting connections.
+          after = ["network-online.target" "libvirtd.service"];
+          wants = ["network-online.target"];
+          requires = ["libvirtd.service"];
           before = ["nixvirt.service"];
           restartTriggers = ["${iso_img.outPath}/nixos.qcow2"];
           script = ''
@@ -72,7 +78,24 @@
             cp ${iso_img.outPath}/nixos.qcow2 /var/lib/libvirt/images/${vm.name}.qcow2
             chmod ug+rw /var/lib/libvirt/images/${vm.name}.qcow2
             /run/current-system/sw/bin/virsh -c qemu:///system destroy ${vm.name} || true
-            /run/current-system/sw/bin/virsh -c qemu:///system start ${vm.name}
+
+            # Backstop for transient start failures the ordering above cannot
+            # cover (a slow switch delaying DHCP past wait-online's timeout,
+            # libvirtd still settling, storage not ready). Without this a
+            # single failure left the VM shut off until someone noticed.
+            started=false
+            for attempt in $(seq 1 10); do
+              if /run/current-system/sw/bin/virsh -c qemu:///system start ${vm.name}; then
+                started=true
+                break
+              fi
+              echo "start attempt $attempt for ${vm.name} failed; retrying in 15s"
+              sleep 15
+            done
+            if [ "$started" != true ]; then
+              echo "ERROR: ${vm.name} did not start after 10 attempts"
+              exit 1
+            fi
           ''
           + lib.concatMapStrings (serial: ''
 

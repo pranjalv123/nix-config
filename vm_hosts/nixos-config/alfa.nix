@@ -142,6 +142,17 @@
           DHCP = "yes";
           IPv6AcceptRA = "yes";
         };
+        # network-online.target used to be satisfied by IPv6LL alone, so on a
+        # cold boot where the switch came up slowly it fired ~70s before the
+        # DHCPv4 lease landed. qemu's SPICE calls getaddrinfo() with
+        # AI_ADDRCONFIG, which refuses to return IPv4 results while the host
+        # has no non-loopback IPv4 address -- so binding 127.0.0.1:5900 failed
+        # with "Address family for hostname not supported" and every VM failed
+        # to start. Hold the target until mgmt actually has a routable v4 addr.
+        linkConfig = {
+          RequiredForOnline = "routable";
+          RequiredFamilyForOnline = "ipv4";
+        };
       };
       "30-vmlink" = {
         matchConfig.Name = "vmlink";
