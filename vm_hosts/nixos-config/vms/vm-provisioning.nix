@@ -43,7 +43,98 @@
     };
   };
 
-  config = {
+  config = let
+    virsh = "/run/current-system/sw/bin/virsh -c qemu:///system";
+    usbVms = builtins.filter (vm: vm.usbSerials != []) config.vms;
+
+    # Reconciles the VM's USB passthrough against what is actually plugged in.
+    #
+    # A plain "attach at start" is not enough: the dongles re-enumerate (a
+    # disconnect/reconnect moves the Sonoff from bus 1 device 3 to device 4),
+    # which silently strips the device from the guest, and a VM restarted by
+    # anything other than vm-prep comes up with no hostdevs at all. Both
+    # happened. So instead of attaching blindly, diff desired against attached
+    # and fix the difference. Safe to run repeatedly.
+    reconcileScript = vm:
+      pkgs.writeShellScript "vm-usb-reconcile-${vm.name}" ''
+        set -u
+        export PATH=${lib.makeBinPath [pkgs.coreutils pkgs.gnugrep pkgs.gawk pkgs.gnused]}:$PATH
+        VM=${vm.name}
+        SERIALS="${lib.concatStringsSep " " vm.usbSerials}"
+
+        # Nothing to reconcile unless the domain is actually running.
+        if ! ${virsh} domstate "$VM" 2>/dev/null | grep -q running; then
+          exit 0
+        fi
+
+        DESIRED=$(mktemp)
+        ATTACHED=$(mktemp)
+        trap 'rm -f "$DESIRED" "$ATTACHED"' EXIT
+
+        # Desired: "vid pid bus dev serial" for each configured dongle that is
+        # currently present on the host. Serial is the stable identity; bus and
+        # device are just where it happens to live right now. These go through
+        # files rather than shell string accumulation -- building a multi-line
+        # variable inside a Nix indented string smuggles the surrounding
+        # indentation into every line after the first, which silently broke the
+        # comparisons below.
+        for serial in $SERIALS; do
+          for d in /sys/bus/usb/devices/*/; do
+            [ -r "$d/serial" ] || continue
+            [ "$(cat "$d/serial" 2>/dev/null)" = "$serial" ] || continue
+            printf '%s %s %s %s %s\n' \
+              "$(cat "$d/idVendor")" "$(cat "$d/idProduct")" \
+              "$(cat "$d/busnum")"   "$(cat "$d/devnum")" "$serial" >> "$DESIRED"
+            break
+          done
+        done
+
+        # Attached: one "vid pid bus dev" line per <hostdev> on the domain. The
+        # guest-side <address type='usb' ... port=.../> has no device= attribute,
+        # so matching on device= picks out the host source address only.
+        ${virsh} dumpxml "$VM" 2>/dev/null | sed "s/'/\"/g" | awk '
+          /<hostdev/            { inhd=1; vid=""; pid=""; bus=""; dev="" }
+          inhd && /<vendor id=/  { if (match($0,/0x[0-9a-fA-F]+/)) vid=substr($0,RSTART+2,RLENGTH-2) }
+          inhd && /<product id=/ { if (match($0,/0x[0-9a-fA-F]+/)) pid=substr($0,RSTART+2,RLENGTH-2) }
+          inhd && /<address bus=/ && /device=/ {
+            if (match($0,/bus="[0-9]+"/))    bus=substr($0,RSTART+5,RLENGTH-6)
+            if (match($0,/device="[0-9]+"/)) dev=substr($0,RSTART+8,RLENGTH-9)
+          }
+          /<\/hostdev>/ { if (inhd && bus != "" && dev != "") print vid" "pid" "bus" "dev; inhd=0 }
+        ' > "$ATTACHED"
+
+        mkxml() { # vid pid bus dev
+          printf %s "<hostdev mode=\"subsystem\" type=\"usb\" managed=\"yes\"><source><vendor id=\"0x$1\"/><product id=\"0x$2\"/><address bus=\"$3\" device=\"$4\"/></source></hostdev>"
+        }
+
+        # Detach whatever is attached but no longer desired -- typically a
+        # hostdev pointing at a bus/device that ceased to exist when the dongle
+        # re-enumerated. Leaving it there blocks the re-attach.
+        while read -r vid pid bus dev; do
+          [ -n "$bus" ] || continue
+          if ! grep -q "^$vid $pid $bus $dev " "$DESIRED"; then
+            echo "detaching stale hostdev $vid:$pid at bus $bus device $dev from $VM"
+            mkxml "$vid" "$pid" "$bus" "$dev" > /run/vm-usb-${vm.name}-detach.xml
+            ${virsh} detach-device "$VM" --file /run/vm-usb-${vm.name}-detach.xml --live || true
+          fi
+        done < "$ATTACHED"
+
+        # Attach whatever is desired but not yet present.
+        while read -r vid pid bus dev serial; do
+          [ -n "$bus" ] || continue
+          if grep -q "^$vid $pid $bus $dev$" "$ATTACHED"; then
+            continue
+          fi
+          echo "attaching USB $vid:$pid (serial $serial) at bus $bus device $dev to $VM"
+          mkxml "$vid" "$pid" "$bus" "$dev" > /run/vm-usb-${vm.name}-attach.xml
+          for attempt in 1 2 3 4 5; do
+            ${virsh} attach-device "$VM" --file /run/vm-usb-${vm.name}-attach.xml --live && break
+            echo "attach attempt $attempt failed; retrying in 3s"
+            sleep 3
+          done
+        done < "$DESIRED"
+      '';
+  in {
     assertions = [
       {
         assertion = lib.lists.allUnique (map (vm: vm.uuid) config.vms);
@@ -52,6 +143,31 @@
     ];
 
     environment.systemPackages = [pkgs.virtiofsd];
+
+    # Re-attach within seconds of a dongle being replugged or re-enumerating,
+    # rather than waiting for the timer (or for someone to notice the lights).
+    services.udev.extraRules = lib.concatMapStrings (vm:
+      lib.concatMapStrings (serial: ''
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{serial}=="${serial}", TAG+="systemd", ENV{SYSTEMD_WANTS}+="vm-usb-${vm.name}.service"
+      '')
+      vm.usbSerials)
+    usbVms;
+
+    # Catch-all for the cases udev cannot see: a VM restarted by nixvirt or by
+    # hand comes up with no hostdevs, and no USB event ever fires.
+    systemd.timers = builtins.listToAttrs (map (vm: {
+        name = "vm-usb-${vm.name}";
+        value = {
+          description = "periodic USB passthrough reconcile for ${vm.name}";
+          wantedBy = ["timers.target"];
+          timerConfig = {
+            OnBootSec = "2min";
+            OnUnitActiveSec = "1min";
+            AccuracySec = "10s";
+          };
+        };
+      })
+      usbVms);
 
     systemd.services = builtins.listToAttrs (map (vm: let
         iso_img = nixos-generators.nixosGenerate {
@@ -71,6 +187,12 @@
           wants = ["network-online.target"];
           requires = ["libvirtd.service"];
           before = ["nixvirt.service"];
+          # nixvirt restarts the domain whenever its definition changes, but it
+          # does that on its own -- bypassing this unit, so the VM came back
+          # with no USB passed through and a half-restored Nomad client. PartOf
+          # propagates that restart here first, keeping every VM restart on the
+          # one path that recreates the disk and reconciles USB.
+          partOf = ["nixvirt.service"];
           restartTriggers = ["${iso_img.outPath}/nixos.qcow2"];
           script = ''
             mkdir -p /var/lib/libvirt/images
@@ -97,44 +219,10 @@
               exit 1
             fi
           ''
-          + lib.concatMapStrings (serial: ''
+          + lib.optionalString (vm.usbSerials != []) ''
 
-            # --- USB passthrough: serial ${serial} ---
-            # The domain was just destroyed and recreated, so there is nothing
-            # attached yet and this cannot double-attach.
-            devpath=""
-            for d in /sys/bus/usb/devices/*/; do
-              if [ -r "$d/serial" ] && [ "$(cat "$d/serial")" = "${serial}" ]; then
-                devpath="$d"
-                break
-              fi
-            done
-
-            if [ -z "$devpath" ]; then
-              echo "WARNING: no USB device with serial ${serial} present; skipping"
-            else
-              vid=$(cat "$devpath/idVendor")
-              pid=$(cat "$devpath/idProduct")
-              busnum=$(cat "$devpath/busnum")
-              devnum=$(cat "$devpath/devnum")
-              echo "Attaching USB $vid:$pid (serial ${serial}) at bus $busnum device $devnum to ${vm.name}"
-
-              printf '<hostdev mode="subsystem" type="usb" managed="yes"><source><vendor id="0x%s"/><product id="0x%s"/><address type="usb" bus="%d" device="%d"/></source></hostdev>' \
-                "$vid" "$pid" "$busnum" "$devnum" \
-                > /run/usb-${vm.name}-${serial}.xml
-
-              # qemu may not have finished coming up the instant virsh start
-              # returns, so give the attach a few tries before giving up.
-              for attempt in 1 2 3 4 5 6 7 8 9 10; do
-                if /run/current-system/sw/bin/virsh -c qemu:///system \
-                     attach-device ${vm.name} --file /run/usb-${vm.name}-${serial}.xml --live; then
-                  break
-                fi
-                echo "attach attempt $attempt failed; retrying in 3s"
-                sleep 3
-              done
-            fi
-          '') vm.usbSerials;
+            ${reconcileScript vm}
+          '';
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
@@ -142,7 +230,21 @@
           wantedBy = ["multi-user.target"];
         };
       })
-      config.vms);
+      config.vms)
+    // builtins.listToAttrs (map (vm: {
+        name = "vm-usb-${vm.name}";
+        value = {
+          description = "reconcile USB passthrough for ${vm.name}";
+          after = ["libvirtd.service"];
+          # Deliberately not RemainAfterExit: this has to be re-runnable, both
+          # from the timer and from udev on every replug.
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = "${reconcileScript vm}";
+          };
+        };
+      })
+      usbVms);
 
     virtualisation.libvirt.connections."qemu:///system".domains =
       map (vm: {
